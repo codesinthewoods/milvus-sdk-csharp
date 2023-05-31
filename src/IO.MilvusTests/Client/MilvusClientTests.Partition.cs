@@ -28,6 +28,7 @@ public partial class MilvusClientTests
         bool partitionExist = await milvusClient.HasPartitionAsync(collectionName, partition);
         if (partitionExist)
         {
+            await milvusClient.ReleaseCollectionAsync(collectionName);
             await milvusClient.DropPartitionsAsync(collectionName,partition);
         }
 
