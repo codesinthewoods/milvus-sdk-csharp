@@ -13,6 +13,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -28,6 +29,7 @@ public class MilvusMemoryStore : IMemoryStore
     private readonly bool _zillizCloud;
     private readonly ILogger _log;
 
+    #region Ctor
     /// <summary>
     /// Construct a milvus memory store.
     /// </summary>
@@ -42,7 +44,7 @@ public class MilvusMemoryStore : IMemoryStore
         this._log = log ?? NullLogger<MilvusMemoryStore>.Instance;
         this._milvusClient = milvusClient;
         this._vectorSize = vectorSize;
-        _zillizCloud = zillizCloud;
+        this._zillizCloud = zillizCloud;
     }
     
     /// <summary>
@@ -60,6 +62,7 @@ public class MilvusMemoryStore : IMemoryStore
         ILogger log = null)
     {
         this._vectorSize = vectorSize;
+        this._zillizCloud = zillizCloud;
         this._log = log ?? NullLogger<MilvusMemoryStore>.Instance;
         this._milvusClient = new MilvusGrpcClient(host, port,log:log);
     }
@@ -84,6 +87,7 @@ public class MilvusMemoryStore : IMemoryStore
         ILogger logger = null)
     {
         this._vectorSize = vectorSize;
+        this._zillizCloud = zillizCloud;
         this._log = logger;
         this._milvusClient = new MilvusGrpcClient(host, port,userName,password,log:logger,grpcChannel:grpcChannel);
     }
@@ -108,9 +112,11 @@ public class MilvusMemoryStore : IMemoryStore
         ILogger logger = null)
     {
         this._vectorSize = vectorSize;
+        this._zillizCloud = zillizCloud;
         this._log = logger;
         this._milvusClient = new MilvusRestClient(host, port, userName, password, log: logger,httpClient:httpClient);
     }
+    #endregion
 
     ///<inheritdoc/>
     public async Task CreateCollectionAsync(
@@ -121,16 +127,28 @@ public class MilvusMemoryStore : IMemoryStore
             collectionName,
             cancellationToken:cancellationToken))
         {
+            //Create collection
             await this._milvusClient.CreateCollectionAsync(collectionName,
                 new FieldType[] { 
                     FieldType.CreateVarchar(IdFieldName,maxLength: 100,isPrimaryKey: true),
                     FieldType.CreateFloatVector(EmbeddingFieldName,_vectorSize),
-                    FieldType.CreateVarchar(MetadataFieldName, maxLength: 10000) },
+                    FieldType.CreateVarchar(MetadataFieldName, maxLength: 1000) },
                 cancellationToken: cancellationToken
                 );
-        }
 
-        await BuildIndexAndLoad(collectionName,EmbeddingFieldName);
+            //Create Index
+            await this._milvusClient.CreateIndexAsync(
+                collectionName,
+                EmbeddingFieldName, 
+                Constants.DEFAULT_INDEX_NAME,
+                _zillizCloud ? MilvusIndexType.AUTOINDEX : MilvusIndexType.IVF_FLAT,
+                MilvusMetricType.IP,
+                new Dictionary<string, string> { { "nlist", "1024" } },
+                cancellationToken: cancellationToken);
+
+            //Load Collection
+            await this._milvusClient.LoadCollectionAsync(collectionName);
+        }
     }
 
     ///<inheritdoc/>
@@ -156,18 +174,19 @@ public class MilvusMemoryStore : IMemoryStore
         bool withEmbedding = false, 
         CancellationToken cancellationToken = default)
     {
+        string expr = $"{IdFieldName} in [\"{key}\"]";
         MilvusQueryResult result = await this._milvusClient.QueryAsync(collectionName,
-            $"{IdFieldName} = {key}",
-            new[] {EmbeddingFieldName,MetadataFieldName},
+            expr,
+            new[] {MetadataFieldName, EmbeddingFieldName },
             cancellationToken:cancellationToken);
 
-        if (result.FieldsData?.Any() != true)
+        if (result.FieldsData?.Any() != true || result.FieldsData.First().RowCount == 0)
         {
             return null;
         }
 
-        var embeddingField = result.FieldsData[0] as FloatVectorField;
-        var metadataField = result.FieldsData[1] as Field<string>;
+        var metadataField = result.FieldsData.First(p => p.FieldName == MetadataFieldName) as Field<string>;
+        var embeddingField = result.FieldsData.First(p => p.FieldName == EmbeddingFieldName) as FloatVectorField;
 
         return MemoryRecord.FromJsonMetadata(
             metadataField.Data[0],
@@ -175,6 +194,7 @@ public class MilvusMemoryStore : IMemoryStore
     }
 
     ///<inheritdoc/>
+#pragma warning disable CS8425 // Asynchronous iterator members have one or more parameters of type 'CancellationToken', but they are not annotated with the 'EnumeratorCancellation' attribute, so the cancellation token parameter in the generated 'IAsyncEnumerable<>.GetAsyncEnumerator' will not be used.
     public async IAsyncEnumerable<MemoryRecord> GetBatchAsync(
         string collectionName, 
         IEnumerable<string> keys, 
@@ -183,10 +203,11 @@ public class MilvusMemoryStore : IMemoryStore
     {
         var keyList = keys.ToList();
         var keyGroup = GetKeyGroup(keyList);
+        var expr = $"{IdFieldName} in [{keyGroup.ToString()}]";
 
         MilvusQueryResult result = await this._milvusClient.QueryAsync(collectionName,
-            $"{IdFieldName} in [{keyGroup.ToString()}]",
-            new[] { EmbeddingFieldName },
+            expr,
+            new[] { MetadataFieldName,EmbeddingFieldName},
             cancellationToken: cancellationToken);
 
         if (result.FieldsData?.Any() != true)
@@ -194,11 +215,11 @@ public class MilvusMemoryStore : IMemoryStore
             yield break;
         }
 
-        for (int i = 0; i < result.FieldsData.Count; i++)
-        {
-            var embeddingField = result.FieldsData[i] as FloatVectorField;
-            var metadataField = result.FieldsData[i] as Field<string>;
+        var metadataField = result.FieldsData.First(p => p.FieldName == MetadataFieldName) as Field<string>;
+        var embeddingField = result.FieldsData.First(p => p.FieldName == EmbeddingFieldName) as FloatVectorField;
 
+        for (int i = 0; i < metadataField.RowCount; i++)
+        {
             yield return MemoryRecord.FromJsonMetadata(
                 metadataField.Data[i],
                 new Embedding<float>(embeddingField.Data[i]));
@@ -223,24 +244,41 @@ public class MilvusMemoryStore : IMemoryStore
         bool withEmbedding = false, 
         CancellationToken cancellationToken = default)
     {
+        //Milvus does not support vector field in out fields
         MilvusSearchResult searchResult = await _milvusClient.SearchAsync(
-            MilvusSearchParameters.Create(collectionName, EmbeddingFieldName, new[] { EmbeddingFieldName,MetadataFieldName })
-            .WithTopK(1),
+            MilvusSearchParameters.Create(collectionName, EmbeddingFieldName, new[] { MetadataFieldName })
+            .WithConsistencyLevel(MilvusConsistencyLevel.Strong)
+            .WithTopK(topK: 1)
+            .WithVectors(new[] { embedding.Vector.ToList() })
+            .WithMetricType(MilvusMetricType.IP)
+            .WithParameter("nprobe", "10")
+            .WithParameter("offset", "5"),
             cancellationToken: cancellationToken);
 
-        if (searchResult.Results.FieldsData.Any() != true)
+        if (searchResult.Results.FieldsData.Any() != true || searchResult.Results.FieldsData.First().RowCount == 0)
         {
             return null;
         }
 
         double score = searchResult.Results.Scores[0];
+        if (score < minRelevanceScore)
+        {
+            return null;
+        }
 
-        var embeddingField = searchResult.Results.FieldsData[0] as FloatVectorField;
-        var metadataField = searchResult.Results.FieldsData[1] as Field<string>;
+        var metadataField = searchResult.Results.FieldsData[0] as Field<string>;
 
-        return (MemoryRecord.FromJsonMetadata(
-            metadataField.Data[0],
-            new Embedding<float>(embeddingField.Data[0])),score);
+        if (withEmbedding)
+        {
+            var metadata = JsonSerializer.Deserialize<MemoryRecordMetadata>(metadataField.Data[0]);
+            return (await GetAsync(collectionName, metadata.Id,withEmbedding), score);
+        }
+        else
+        {
+            return (MemoryRecord.FromJsonMetadata(
+                metadataField.Data[0],
+                null), score);
+        }
     }
 
     ///<inheritdoc/>
@@ -252,17 +290,25 @@ public class MilvusMemoryStore : IMemoryStore
         bool withEmbeddings = false, 
         CancellationToken cancellationToken = default)
     {
+        //Milvus does not support vector field in out fields
         MilvusSearchResult searchResult = await _milvusClient.SearchAsync(
-            MilvusSearchParameters.Create(collectionName, EmbeddingFieldName, new[] { EmbeddingFieldName, MetadataFieldName })
-            .WithTopK(limit),
+            MilvusSearchParameters.Create(collectionName, EmbeddingFieldName, new[] { MetadataFieldName })
+            .WithConsistencyLevel(MilvusConsistencyLevel.Strong)
+            .WithTopK(topK: limit)
+            .WithVectors(new[] { embedding.Vector.ToList() })
+            .WithMetricType(MilvusMetricType.IP)
+            .WithParameter("nprobe", "10")
+            .WithParameter("offset", "5"),
             cancellationToken: cancellationToken);
 
-        if (searchResult.Results.FieldsData.Any() != true)
+        if (searchResult.Results.FieldsData.Any() != true || searchResult.Results.FieldsData.First().RowCount == 0)
         {
             yield break;
         }
 
-        for (int i = 0; i < searchResult.Results.FieldsData.Count; i++)
+        var metadataField = searchResult.Results.FieldsData[0] as Field<string>;
+
+        for (int i = 0; i < metadataField.RowCount; i++)
         {
             double score = searchResult.Results.Scores[i];
             if (score < minRelevanceScore)
@@ -270,12 +316,17 @@ public class MilvusMemoryStore : IMemoryStore
                 continue;
             }
 
-            var embeddingField = searchResult.Results.FieldsData[i*2] as FloatVectorField;
-            var metadataField = searchResult.Results.FieldsData[2*i+1] as Field<string>;
-
-            yield return (MemoryRecord.FromJsonMetadata(
-                metadataField.Data[0],
-                new Embedding<float>(embeddingField.Data[0])), score);
+            if (withEmbeddings)
+            {
+                var metadata = JsonSerializer.Deserialize<MemoryRecordMetadata>(metadataField.Data[0]);
+                yield return (await GetAsync(collectionName, metadata.Id, withEmbeddings), score);
+            }
+            else
+            {
+                yield return (MemoryRecord.FromJsonMetadata(
+                    metadataField.Data[i],
+                    null), score);
+            }
         }
     }
 
@@ -287,7 +338,7 @@ public class MilvusMemoryStore : IMemoryStore
     {
         await this._milvusClient.DeleteAsync(
             collectionName,
-            $"{IdFieldName} = {key}",
+            $"{IdFieldName} in [\"{key}\"]",
             cancellationToken:cancellationToken);
     }
 
@@ -346,27 +397,9 @@ public class MilvusMemoryStore : IMemoryStore
             yield return id;
         }
     }
+#pragma warning restore CS8425 // Asynchronous iterator members have one or more parameters of type 'CancellationToken', but they are not annotated with the 'EnumeratorCancellation' attribute, so the cancellation token parameter in the generated 'IAsyncEnumerable<>.GetAsyncEnumerator' will not be used.
 
     #region Private ===============================================================================
-    private async Task BuildIndexAndLoad(string collectionName,string fieldName,CancellationToken cancellationToken = default)
-    {
-        IndexState indexSate = await _milvusClient.GetIndexState(collectionName,fieldName, cancellationToken);
-
-        if (indexSate == IndexState.None)
-        {
-            await _milvusClient.CreateIndexAsync(
-                collectionName,
-                fieldName,
-                Constants.DEFAULT_INDEX_NAME,
-                _zillizCloud ? MilvusIndexType.AUTOINDEX : MilvusIndexType.IVF_FLAT,
-                MilvusMetricType.IP,
-                new Dictionary<string, string>(),
-                cancellationToken);
-        }
-
-        await _milvusClient.LoadCollectionAsync(collectionName);
-    }
-
     private static StringBuilder GetKeyGroup(IEnumerable<string> keys)
     {
         StringBuilder stringBuilder = new();
@@ -374,7 +407,7 @@ public class MilvusMemoryStore : IMemoryStore
         {
             if (stringBuilder.Length > 0)
             {
-                stringBuilder.Append(",");
+                stringBuilder.Append(", ");
             }
             stringBuilder.Append($"\"{key}\"");
         }
@@ -387,9 +420,9 @@ public class MilvusMemoryStore : IMemoryStore
         return Field.Create<string>(IdFieldName, new[] { record.Metadata.Id });
     }
 
-    private Field ToMetadataField(MemoryRecord record)
+    private Field ToIdField(IEnumerable<MemoryRecord> records)
     {
-        return Field.CreateVarChar(IdFieldName, new[] { record.GetSerializedMetadata() });
+        return Field.Create<string>(IdFieldName, records.Select(m => m.Metadata.Id).ToList());
     }
 
     private Field ToFloatField(MemoryRecord record)
@@ -399,17 +432,17 @@ public class MilvusMemoryStore : IMemoryStore
 
     private Field ToFloatField(IEnumerable<MemoryRecord> records)
     {
-        return Field.Create<string>(IdFieldName, records.Select(m => m.Metadata.Id).ToList());
+        return Field.CreateFloatVector(EmbeddingFieldName, records.Select(m => m.Embedding.Vector.ToList()).ToList());
     }
 
-    private Field ToIdField(IEnumerable<MemoryRecord> records)
+    private Field ToMetadataField(MemoryRecord record)
     {
-        return Field.CreateFloatVector(EmbeddingFieldName, records.Select(m => m.Embedding.Vector.ToList()).ToList());
+        return Field.CreateVarChar(MetadataFieldName, new[] { record.GetSerializedMetadata() });
     }
 
     private Field ToMetadataField(IEnumerable<MemoryRecord> record)
     {
-        return Field.CreateVarChar(IdFieldName, record.Select(m => m.GetSerializedMetadata()).ToList());
+        return Field.CreateVarChar(MetadataFieldName, record.Select(m => m.GetSerializedMetadata()).ToList());
     }
     #endregion
 }

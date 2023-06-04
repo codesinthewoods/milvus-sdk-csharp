@@ -1,15 +1,15 @@
 ﻿using Xunit;
-using IO.Milvus.Client.gRPC;
 using Microsoft.SemanticKernel.AI.Embeddings;
-using System.Reflection.Emit;
 using Microsoft.SemanticKernel.Memory;
 using IO.Milvus;
+using IO.Milvus.Client;
+using Connectors.Memory.MilvusTests;
 
 namespace Connectors.Memory.Milvus.Tests;
 
 public class MilvusMemoryStoreTests
 {
-    private readonly string _collectionName = "test";
+    private readonly string _collectionName = "test2";
     private readonly string _id = "Id";
     private readonly string _id2 = "Id2";
     private readonly string _id3 = "Id3";
@@ -23,112 +23,127 @@ public class MilvusMemoryStoreTests
     private readonly Embedding<float> _embedding2 = new Embedding<float>(new float[] { 2, 2, 2 });
     private readonly Embedding<float> _embedding3 = new Embedding<float>(new float[] { 3, 3, 3 });
 
-    [Fact()]
-    public async Task<IMemoryStore> ConnectionCanBeInitialized()
+    [Theory]
+    [ClassData(typeof(TestClients))]
+    public async Task ConnectionCanBeInitialized(IMilvusClient milvusClient)
     {
-        var milvusClient = new MilvusGrpcClient("https://in01-840db488d50733e.aws-us-west-2.vectordb.zillizcloud.com", 19535, "db_admin", "Milvus-CSharp-SDK");
         MilvusHealthState healthState = await milvusClient.HealthAsync(default);
         Assert.True(healthState.IsHealthy,healthState.ErrorMsg);
 
-        var db = new MilvusMemoryStore(milvusClient, 3,true);
-
+        var db = new MilvusMemoryStore(milvusClient, 3,milvusClient.ToString().Contains("zilliz",StringComparison.OrdinalIgnoreCase));
         Assert.NotNull(db);
-        return db;
     }
 
-    [Fact()]
-    public async Task CollectionAsyncTest()
+    [Theory]
+    [ClassData(typeof(TestClients))]
+    public async Task ConnectorTest(IMilvusClient milvusClient)
     {
-        IMemoryStore db = await ConnectionCanBeInitialized();
-        await db.CreateCollectionAsync(_collectionName);
+        var db = new MilvusMemoryStore(milvusClient, 3, milvusClient.ToString().Contains("zilliz", StringComparison.OrdinalIgnoreCase));
 
-        bool result = await db.DoesCollectionExistAsync(_collectionName);
-        Assert.True(result);
-
-        var collections = await db.GetCollectionsAsync().ToListAsync();
-        Assert.Contains(_collectionName, collections);
-
-        await db.DeleteCollectionAsync(_collectionName);
-
-        result = await db.DoesCollectionExistAsync(_collectionName);
-        Assert.False(result);
-    }
-
-    [Fact()]
-    public async Task GetAsyncTest()
-    {
-        IMemoryStore db = await ConnectionCanBeInitialized();
-        bool result = await db.DoesCollectionExistAsync(_collectionName);
-        if (result)
+        //Clear previous exist collection.
+        bool collectionExist = await db.DoesCollectionExistAsync(this._collectionName);
+        if (collectionExist)
         {
-            await db.DeleteCollectionAsync(_collectionName);
+            await db.DeleteCollectionAsync(this._collectionName);
         }
-        result = await db.DoesCollectionExistAsync(_collectionName);
-        Assert.False(result);
-        await db.CreateCollectionAsync(_collectionName);
 
-        result = await db.DoesCollectionExistAsync(_collectionName);
-        Assert.True(result);
+        //Create collection.
+        await db.CreateCollectionAsync(this._collectionName);
+        collectionExist = await db.DoesCollectionExistAsync(this._collectionName);
+        Assert.True(collectionExist);
 
-        var memoryRecord = MemoryRecord.LocalRecord(
+        //Wait for collection loaded
+        await Task.Delay(TimeSpan.FromSeconds(10));
+
+        //Validate collection.
+        var collections = await db.GetCollectionsAsync().ToListAsync();
+        Assert.Contains(this._collectionName, collections);
+
+        //Create a record
+        var memoryRecord = CreateRecords().First();
+
+        //Insert record
+        string id = await db.UpsertAsync(this._collectionName, memoryRecord);
+        await Task.Delay(1000);
+
+        //Query record
+        MemoryRecord? returnedRecord = await db.GetAsync(this._collectionName, id);
+        Assert.NotNull(returnedRecord);
+        Assert.True(returnedRecord.Metadata.Id == this._id);
+        
+        //Delete record 
+        await db.RemoveAsync(this._collectionName, id);
+        await Task.Delay(1000);
+
+        //Check
+        returnedRecord = await db.GetAsync(this._collectionName, id);
+        Assert.Null(returnedRecord);
+
+        //Batch insert
+        IAsyncEnumerable<string> ids = db.UpsertBatchAsync(this._collectionName, CreateRecords());
+        Assert.NotEmpty(ids.ToEnumerable());
+        Assert.Equal(3, ids.CountAsync().Result);
+        await Task.Delay(1000);
+
+        //Query record
+        returnedRecord = await db.GetAsync(this._collectionName, id);
+        Assert.NotNull(returnedRecord);
+        Assert.True(returnedRecord.Metadata.Id == this._id);
+
+        var records = db.GetBatchAsync(this._collectionName, new[] {this._id,this._id2}).ToEnumerable();
+        Assert.Equal(2, records.Count());
+        Assert.Contains(records, r => r.Metadata.Id == this._id);
+        Assert.Contains(records, r => r.Metadata.Id == this._id2);
+
+        //Get nearest
+        (MemoryRecord, double)? match = await db.GetNearestMatchAsync(this._collectionName, _embedding);
+        Assert.NotNull(match);
+
+        IAsyncEnumerable<(MemoryRecord, double)> matches = db.GetNearestMatchesAsync(this._collectionName, _embedding, 2);
+        Assert.NotNull(match);
+
+        //Delete record 
+        await db.RemoveAsync(this._collectionName, id);
+        await Task.Delay(1000);
+
+        //Check
+        returnedRecord = await db.GetAsync(this._collectionName, id);
+        Assert.Null(returnedRecord);
+
+        //Delete collection
+        await db.DeleteCollectionAsync(this._collectionName);
+    }
+
+    private IEnumerable<MemoryRecord> CreateRecords()
+    {
+        var e = Normalize(_embedding);
+        var e2 = Normalize(_embedding2);
+        var e3 = Normalize(_embedding3);
+
+        yield return MemoryRecord.LocalRecord(
             id: this._id,
             text: this._text,
             description: this._description,
-            embedding: this._embedding);
+            embedding: e);
 
-        string id = await db.UpsertAsync(_collectionName, memoryRecord);
+        yield return MemoryRecord.LocalRecord(
+            id: this._id2,
+            text: this._text2,
+            description: this._description2,
+            embedding: e2);
 
-        await Task.Delay(5000);
-
-        var returnedRecord = await db.GetAsync(_collectionName, id);
-        Assert.NotNull(returnedRecord);
+        yield return MemoryRecord.LocalRecord(
+            id: this._id3,
+            text: this._text3,
+            description: this._description3,
+            embedding: e3);
     }
 
-    [Fact()]
-    public void GetBatchAsyncTest()
+    private Embedding<float> Normalize(Embedding<float> embedding)
     {
-        Assert.True(false, "This test needs an implementation");
-    }
-
-    [Fact()]
-    public void GetCollectionsAsyncTest()
-    {
-        Assert.True(false, "This test needs an implementation");
-    }
-
-    [Fact()]
-    public void GetNearestMatchAsyncTest()
-    {
-        Assert.True(false, "This test needs an implementation");
-    }
-
-    [Fact()]
-    public void GetNearestMatchesAsyncTest()
-    {
-        Assert.True(false, "This test needs an implementation");
-    }
-
-    [Fact()]
-    public void RemoveAsyncTest()
-    {
-        Assert.True(false, "This test needs an implementation");
-    }
-
-    [Fact()]
-    public void RemoveBatchAsyncTest()
-    {
-        Assert.True(false, "This test needs an implementation");
-    }
-
-    [Fact()]
-    public void UpsertAsyncTest()
-    {
-        Assert.True(false, "This test needs an implementation");
-    }
-
-    [Fact()]
-    public void UpsertBatchAsyncTest()
-    {
-        Assert.True(false, "This test needs an implementation");
+        return embedding;
+        //List<float> data = embedding.Vector.ToList();
+        //Vector3 vector = Vector3.Normalize((new Vector3(data[0], data[1], data[2])));
+        //return new Embedding<float>(new[] { vector.X, vector.Y, vector.Z });
     }
 }

@@ -6,8 +6,11 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="IO.Milvus" Version="2.2.1-alpha.4" />
-    <PackageReference Include="Microsoft.SemanticKernel.Abstractions" Version="0.14.547.1-preview" />
+    <PackageReference Include="Microsoft.SemanticKernel.Abstractions" Version="0.15.230531.5-preview" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\IO.Milvus\IO.Milvus.csproj" />
   </ItemGroup>
 
 </Project>

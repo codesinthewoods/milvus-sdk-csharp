@@ -31,7 +31,6 @@
             <PrivateAssets>all</PrivateAssets>
         </PackageReference>
         <PackageReference Include="FluentAssertions" Version="6.11.0" />
-        <PackageReference Include="System.Net.Http.WinHttpHandler" Version="8.0.0-preview.4.23259.5" />
     </ItemGroup>
 
     <ItemGroup>
