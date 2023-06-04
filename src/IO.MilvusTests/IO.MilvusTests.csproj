@@ -7,7 +7,7 @@
         <IsPackable>false</IsPackable>
         <LangVersion>latest</LangVersion>
 
-        <TargetFrameworks>net6.0</TargetFrameworks>
+        <TargetFrameworks>net7.0</TargetFrameworks>
 
         <PlatformTarget>x64</PlatformTarget>
 
@@ -39,13 +39,7 @@
     </ItemGroup>
 
     <ItemGroup>
-      <None Update="milvusclient.json">
-        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      </None>
-      <None Update="milvusclient.localhost.json">
-        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      </None>
-      <None Update="milvusclient.zillizclound.json">
+      <None Update="milvusclients.json">
         <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       </None>
       <None Update="xunit.runner.json">
@@ -55,6 +49,10 @@
 
     <ItemGroup>
       <None Include="..\.editorconfig" Link=".editorconfig" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <Folder Include="Utils\" />
     </ItemGroup>
 
     <ProjectExtensions><VisualStudio><UserProperties /></VisualStudio></ProjectExtensions>

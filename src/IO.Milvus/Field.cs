@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Text.Json.Serialization;
 using IO.Milvus.Diagnostics;
+using System.Collections.Specialized;
 
 namespace IO.Milvus;
 
@@ -17,6 +18,7 @@ namespace IO.Milvus;
 [JsonDerivedType(typeof(ByteStringField))]
 [JsonDerivedType(typeof(FloatVectorField))]
 [JsonDerivedType(typeof(Field<bool>))]
+[JsonDerivedType(typeof(Field<sbyte>))]
 [JsonDerivedType(typeof(Field<short>))]
 [JsonDerivedType(typeof(Field<int>))]
 [JsonDerivedType(typeof(Field<long>))]
@@ -53,7 +55,7 @@ public abstract class Field
     /// Field id.
     /// </summary>
     [JsonPropertyName("field_id")]
-    public long FieldId { get; }
+    public long FieldId { get; internal set; }
 
     /// <summary>
     /// <see cref="MilvusDataType"/>
@@ -161,6 +163,10 @@ public abstract class Field
         {
             dataType = MilvusDataType.Bool;
         }
+        else if(type == typeof(sbyte))
+        {
+            dataType = MilvusDataType.Int8;
+        }
         else if (type == typeof(Int16))
         {
             dataType = MilvusDataType.Int16;
@@ -204,16 +210,16 @@ public abstract class Field
     /// Create a field
     /// </summary>
     /// <typeparam name="TData">
-    /// Data type:
+    /// Data type: If you use string , the data type will be <see cref="MilvusDataType.VarChar"/>
     /// <list type="bullet">
-    /// <item><see cref="bool"/> : int32</item>
-    /// <item><see cref="short"/> : int8</item>
-    /// <item><see cref="Int16"/> : int8</item>
-    /// <item><see cref="int"/> : int32</item>
-    /// <item><see cref="long"/> : int64</item>
-    /// <item><see cref="float"/> : float</item>
-    /// <item><see cref="double"/> : double</item>
-    /// <item><see cref="string"/> : string</item>
+    /// <item><see cref="bool"/> : bool <see cref="MilvusDataType.Bool"/></item>
+    /// <item><see cref="sbyte"/> : int8 <see cref="MilvusDataType.Int8"/></item>
+    /// <item><see cref="Int16"/> : int16 <see cref="MilvusDataType.Int16"/></item>
+    /// <item><see cref="int"/> : int32 <see cref="MilvusDataType.Int32"/></item>
+    /// <item><see cref="long"/> : int64 <see cref="MilvusDataType.Int64"/></item>
+    /// <item><see cref="float"/> : float <see cref="MilvusDataType.Float"/></item>
+    /// <item><see cref="double"/> : double <see cref="MilvusDataType.Double"/></item>
+    /// <item><see cref="string"/> : string <see cref="MilvusDataType.VarChar"/></item>
     /// </list>
     /// </typeparam>
     /// <param name="fieldName">Field name</param>
@@ -401,7 +407,16 @@ public class Field<TData> : Field
                 }
                 break;
             case MilvusDataType.Int8:
-                throw new NotSupportedException("not support in .net");
+                {
+                    var intData = new Grpc.IntArray();
+                    intData.Data.AddRange((Data as IEnumerable<sbyte>).Select(p => (int)p));
+
+                    fieldData.Scalars = new Grpc.ScalarField()
+                    {
+                        IntData = intData
+                    };
+                }
+                break;
             case MilvusDataType.Int16:
                 {
                     var intData = new Grpc.IntArray();
@@ -484,6 +499,15 @@ public class Field<TData> : Field
         }
 
         return fieldData;
+    }
+
+    /// <summary>
+    /// Return string value of <see cref="Field{TData}"/>
+    /// </summary>
+    /// <returns></returns>
+    public override string ToString()
+    {
+        return $"Field: {{{nameof(FieldName)}: {FieldName}, {nameof(DataType)}: {DataType}, {nameof(Data)}: {Data?.Count}, {nameof(RowCount)}: {RowCount}}}";
     }
 
     internal void Check()
