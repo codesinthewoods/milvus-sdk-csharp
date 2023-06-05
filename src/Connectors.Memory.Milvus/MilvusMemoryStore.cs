@@ -1,6 +1,5 @@
 ﻿using Grpc.Net.Client;
 using IO.Milvus;
-using IO.Milvus.ApiSchema;
 using IO.Milvus.Client;
 using IO.Milvus.Client.gRPC;
 using IO.Milvus.Client.REST;
@@ -8,7 +7,6 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.SemanticKernel.AI.Embeddings;
 using Microsoft.SemanticKernel.Memory;
-using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
@@ -23,7 +21,7 @@ namespace Connectors.Memory.Milvus;
 public class MilvusMemoryStore : IMemoryStore
 {
     private const string EmbeddingFieldName = "embedding";
-    private const string IdFieldName = "Id";
+    private const string IdFieldName = "id";
     private const string MetadataFieldName = "metadata";
     private readonly IMilvusClient _milvusClient;
     private readonly int _vectorSize;
@@ -200,9 +198,9 @@ public class MilvusMemoryStore : IMemoryStore
         bool withEmbeddings = false,
         [EnumeratorCancellation]CancellationToken cancellationToken = default)
     {
-        var keyList = keys.ToList();
-        var keyGroup = GetKeyGroup(keyList);
-        var expr = $"{IdFieldName} in [{keyGroup}]";
+        List<string> keyList = keys.ToList();
+        StringBuilder keyGroup = GetKeyGroup(keyList);
+        string expr = $"{IdFieldName} in [{keyGroup}]";
 
         MilvusQueryResult result = await this._milvusClient.QueryAsync(collectionName,
             expr,
@@ -228,7 +226,7 @@ public class MilvusMemoryStore : IMemoryStore
     ///<inheritdoc/>
     public async IAsyncEnumerable<string> GetCollectionsAsync([EnumeratorCancellation]CancellationToken cancellationToken = default)
     {
-        var result = await _milvusClient.ShowCollectionsAsync(cancellationToken: cancellationToken);
+        IList<MilvusCollection> result = await _milvusClient.ShowCollectionsAsync(cancellationToken: cancellationToken);
         foreach (var collection in result)
         {
             yield return collection.CollectionName;
