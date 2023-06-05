@@ -7,7 +7,7 @@ using Connectors.Memory.MilvusTests;
 
 namespace Connectors.Memory.Milvus.Tests;
 
-public class MilvusMemoryStoreTests
+public partial class MilvusMemoryStoreTests
 {
     private readonly string _collectionName = "test2";
     private readonly string _id = "Id";
