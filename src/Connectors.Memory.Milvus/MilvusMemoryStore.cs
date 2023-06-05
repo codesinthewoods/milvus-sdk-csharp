@@ -12,6 +12,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -193,17 +194,15 @@ public class MilvusMemoryStore : IMemoryStore
             new Embedding<float>(embeddingField.Data[0]));
     }
 
-    ///<inheritdoc/>
-#pragma warning disable CS8425 // Asynchronous iterator members have one or more parameters of type 'CancellationToken', but they are not annotated with the 'EnumeratorCancellation' attribute, so the cancellation token parameter in the generated 'IAsyncEnumerable<>.GetAsyncEnumerator' will not be used.
     public async IAsyncEnumerable<MemoryRecord> GetBatchAsync(
         string collectionName, 
         IEnumerable<string> keys, 
         bool withEmbeddings = false,
-        CancellationToken cancellationToken = default)
+        [EnumeratorCancellation]CancellationToken cancellationToken = default)
     {
         var keyList = keys.ToList();
         var keyGroup = GetKeyGroup(keyList);
-        var expr = $"{IdFieldName} in [{keyGroup.ToString()}]";
+        var expr = $"{IdFieldName} in [{keyGroup}]";
 
         MilvusQueryResult result = await this._milvusClient.QueryAsync(collectionName,
             expr,
@@ -227,7 +226,7 @@ public class MilvusMemoryStore : IMemoryStore
     }
 
     ///<inheritdoc/>
-    public async IAsyncEnumerable<string> GetCollectionsAsync(CancellationToken cancellationToken = default)
+    public async IAsyncEnumerable<string> GetCollectionsAsync([EnumeratorCancellation]CancellationToken cancellationToken = default)
     {
         var result = await _milvusClient.ShowCollectionsAsync(cancellationToken: cancellationToken);
         foreach (var collection in result)
@@ -288,7 +287,7 @@ public class MilvusMemoryStore : IMemoryStore
         int limit, 
         double minRelevanceScore = 0, 
         bool withEmbeddings = false, 
-        CancellationToken cancellationToken = default)
+        [EnumeratorCancellation]CancellationToken cancellationToken = default)
     {
         //Milvus does not support vector field in out fields
         MilvusSearchResult searchResult = await _milvusClient.SearchAsync(
@@ -377,7 +376,7 @@ public class MilvusMemoryStore : IMemoryStore
     public async IAsyncEnumerable<string> UpsertBatchAsync(
         string collectionName, 
         IEnumerable<MemoryRecord> records, 
-        CancellationToken cancellationToken = default)
+        [EnumeratorCancellation]CancellationToken cancellationToken = default)
     {
         if (records?.Any() != true)
         {
@@ -397,7 +396,6 @@ public class MilvusMemoryStore : IMemoryStore
             yield return id;
         }
     }
-#pragma warning restore CS8425 // Asynchronous iterator members have one or more parameters of type 'CancellationToken', but they are not annotated with the 'EnumeratorCancellation' attribute, so the cancellation token parameter in the generated 'IAsyncEnumerable<>.GetAsyncEnumerator' will not be used.
 
     #region Private ===============================================================================
     private static StringBuilder GetKeyGroup(IEnumerable<string> keys)
