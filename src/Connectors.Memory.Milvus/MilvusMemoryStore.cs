@@ -25,7 +25,7 @@ public class MilvusMemoryStore : IMemoryStore
     private const string MetadataFieldName = "metadata";
     private readonly IMilvusClient _milvusClient;
     private readonly int _vectorSize;
-    private readonly bool _zillizCloud;
+    private readonly MilvusIndexType _milvusIndexType;
     private readonly ILogger _log;
 
     #region Ctor
@@ -33,35 +33,38 @@ public class MilvusMemoryStore : IMemoryStore
     /// Construct a milvus memory store.
     /// </summary>
     /// <param name="milvusClient">Milvus client.</param>
+    /// <param name="vectorSize">Vector size.</param>
+    /// <param name="milvusIndexType">Milvus index type. AutoIndex for zilliz cloud and milvus 2.2.9 above</param>
     /// <param name="logger">Logger.</param>
     public MilvusMemoryStore(
         IMilvusClient milvusClient, 
         int vectorSize, 
-        bool zillizCloud = false, 
+        MilvusIndexType milvusIndexType = MilvusIndexType.AUTOINDEX, 
         ILogger log = null)
     {
         this._log = log ?? NullLogger<MilvusMemoryStore>.Instance;
         this._milvusClient = milvusClient;
         this._vectorSize = vectorSize;
-        this._zillizCloud = zillizCloud;
+        this._milvusIndexType = milvusIndexType;
     }
-    
+
     /// <summary>
     /// Construct a milvus memory store.
     /// </summary>
     /// <param name="host">Milvus server address.</param>
     /// <param name="port">Port</param>
     /// <param name="vectorSize">Vector size</param>
+    /// <param name="milvusIndexType">Milvus index type. AutoIndex for zilliz cloud and milvus 2.2.9 above</param>
     /// <param name="logger">Logger</param>
     public MilvusMemoryStore(
         string host,
         int port,
         int vectorSize,
-        bool zillizCloud = false,
+        MilvusIndexType milvusIndexType = MilvusIndexType.AUTOINDEX,
         ILogger log = null)
     {
         this._vectorSize = vectorSize;
-        this._zillizCloud = zillizCloud;
+        this._milvusIndexType = milvusIndexType;
         this._log = log ?? NullLogger<MilvusMemoryStore>.Instance;
         this._milvusClient = new MilvusGrpcClient(host, port,log:log);
     }
@@ -74,6 +77,8 @@ public class MilvusMemoryStore : IMemoryStore
     /// <param name="vectorSize">Vector size.</param>
     /// <param name="userName">Username.</param>
     /// <param name="password">Password.</param>
+    /// <param name="grpcChannel">Grpc channel</param>
+    /// <param name="milvusIndexType">Milvus index type. AutoIndex for zilliz cloud and milvus 2.2.9 above</param>
     /// <param name="logger">Logger.</param>
     public MilvusMemoryStore(
         string host,
@@ -81,12 +86,12 @@ public class MilvusMemoryStore : IMemoryStore
         int vectorSize,
         string userName = "root",
         string password = "milvus",
-        bool zillizCloud = false,
+        MilvusIndexType milvusIndexType = MilvusIndexType.AUTOINDEX,
         GrpcChannel grpcChannel = null,
         ILogger logger = null)
     {
         this._vectorSize = vectorSize;
-        this._zillizCloud = zillizCloud;
+        this._milvusIndexType = milvusIndexType;
         this._log = logger;
         this._milvusClient = new MilvusGrpcClient(host, port,userName,password,log:logger,grpcChannel:grpcChannel);
     }
@@ -106,12 +111,12 @@ public class MilvusMemoryStore : IMemoryStore
         int vectorSize,
         string userName = "root",
         string password = "milvus",
-        bool zillizCloud = false,
+        MilvusIndexType milvusIndexType = MilvusIndexType.AUTOINDEX,
         HttpClient httpClient = null,
         ILogger logger = null)
     {
         this._vectorSize = vectorSize;
-        this._zillizCloud = zillizCloud;
+        this._milvusIndexType = milvusIndexType;
         this._log = logger;
         this._milvusClient = new MilvusRestClient(host, port, userName, password, log: logger,httpClient:httpClient);
     }
@@ -140,9 +145,9 @@ public class MilvusMemoryStore : IMemoryStore
                 collectionName,
                 EmbeddingFieldName, 
                 Constants.DEFAULT_INDEX_NAME,
-                _zillizCloud ? MilvusIndexType.AUTOINDEX : MilvusIndexType.IVF_FLAT,
+                _milvusIndexType,
                 MilvusMetricType.IP,
-                new Dictionary<string, string> { { "nlist", "1024" } },
+                null,
                 cancellationToken: cancellationToken);
 
             //Load Collection
@@ -248,8 +253,7 @@ public class MilvusMemoryStore : IMemoryStore
             .WithTopK(topK: 1)
             .WithVectors(new[] { embedding.Vector.ToList() })
             .WithMetricType(MilvusMetricType.IP)
-            .WithParameter("nprobe", "10")
-            .WithParameter("offset", "5"),
+            .WithParameter("nprobe", "10"),
             cancellationToken: cancellationToken);
 
         if (searchResult.Results.FieldsData.Any() != true || searchResult.Results.FieldsData.First().RowCount == 0)
@@ -294,8 +298,7 @@ public class MilvusMemoryStore : IMemoryStore
             .WithTopK(topK: limit)
             .WithVectors(new[] { embedding.Vector.ToList() })
             .WithMetricType(MilvusMetricType.IP)
-            .WithParameter("nprobe", "10")
-            .WithParameter("offset", "5"),
+            .WithParameter("nprobe", "10"),
             cancellationToken: cancellationToken);
 
         if (searchResult.Results.FieldsData.Any() != true || searchResult.Results.FieldsData.First().RowCount == 0)

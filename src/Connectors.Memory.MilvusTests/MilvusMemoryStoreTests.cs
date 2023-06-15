@@ -30,7 +30,7 @@ public partial class MilvusMemoryStoreTests
         MilvusHealthState healthState = await milvusClient.HealthAsync(default);
         Assert.True(healthState.IsHealthy,healthState.ErrorMsg);
 
-        var db = new MilvusMemoryStore(milvusClient, 3,milvusClient.ToString().Contains("zilliz",StringComparison.OrdinalIgnoreCase));
+        var db = new MilvusMemoryStore(milvusClient, 3, MilvusIndexType.AUTOINDEX);
         Assert.NotNull(db);
     }
 
@@ -38,7 +38,7 @@ public partial class MilvusMemoryStoreTests
     [ClassData(typeof(TestClients))]
     public async Task ConnectorTest(IMilvusClient milvusClient)
     {
-        var db = new MilvusMemoryStore(milvusClient, 3, milvusClient.ToString().Contains("zilliz", StringComparison.OrdinalIgnoreCase));
+        var db = new MilvusMemoryStore(milvusClient, 3, MilvusIndexType.AUTOINDEX);
 
         //Clear previous exist collection.
         bool collectionExist = await db.DoesCollectionExistAsync(this._collectionName);
@@ -111,7 +111,7 @@ public partial class MilvusMemoryStoreTests
         Assert.Null(returnedRecord);
 
         //Delete collection
-        await db.DeleteCollectionAsync(this._collectionName);
+        //await db.DeleteCollectionAsync(this._collectionName);
     }
 
     private IEnumerable<MemoryRecord> CreateRecords()

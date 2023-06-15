@@ -4,6 +4,7 @@ using IO.Milvus.Utils;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Text.Json.Serialization;
 
 namespace IO.Milvus.ApiSchema;
@@ -93,6 +94,8 @@ internal sealed class CreateIndexRequest:
     {
         this.Validate();
 
+        if (ExtraParams == null)
+            ExtraParams = new Dictionary<string,string>();
         ExtraParams["metric_type"] = _milvusMetricType.ToString();
         ExtraParams["index_type"] = _milvusIndexType.ToString();
 
